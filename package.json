@@ -17,9 +17,7 @@
     "dev": "bun --watch src/index.ts"
   },
   "dependencies": {
-    "@astrojs/tailwind": "^6.0.2",
     "@clack/prompts": "^0.10.1",
-    "astro": "5.16.6",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
