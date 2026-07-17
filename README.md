@@ -161,4 +161,4 @@ The `prepublishOnly` hook automatically runs `bun run build`, producing a single
 
 ## License
 
-MIT
+MIT - LICENSE
