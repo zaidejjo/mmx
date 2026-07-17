@@ -1,0 +1,231 @@
+---
+// TerminalSim.astro — Next-gen terminal simulation
+// Floating macOS-style window with glass backdrop blur
+// Pure HTML/CSS, respects prefers-reduced-motion
+---
+
+<div class="terminal-wrapper group">
+  <div class="terminal-window">
+    <!-- Title bar -->
+    <div class="terminal-bar">
+      <div class="flex items-center gap-[7px]">
+        <span class="dot dot-red"></span>
+        <span class="dot dot-yellow"></span>
+        <span class="dot dot-green"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="terminal-icon">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" stroke="#71717A" stroke-width="0.8"/>
+            <path d="M4.5 6.5L5.5 7.5L7.5 5" stroke="#71717A" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="terminal-title">mmx — interactive</span>
+      </div>
+      <div class="w-[52px]"></div>
+    </div>
+
+    <!-- Terminal body -->
+    <div class="terminal-body">
+      <!-- Line 1: command -->
+      <div class="term-line" style="--d: 0.2s;">
+        <span class="prompt">~ $</span>
+        <span class="cmd">mmx</span>
+      </div>
+
+      <!-- Line 2: top border -->
+      <div class="term-line dim-gray" style="--d: 0.6s;">
+        ┌─────────────────────────────────────────────────┐
+      </div>
+
+      <!-- Line 3: header -->
+      <div class="term-line" style="--d: 0.8s;">
+        <span class="text-zinc-600">│</span>
+        <span class="text-cyan-400 font-semibold">  mmx</span>
+        <span class="text-zinc-600">  — Media Manipulation eXpress v0.1.0        │</span>
+      </div>
+
+      <!-- Line 4: prompt -->
+      <div class="term-line" style="--d: 1.0s;">
+        <span class="text-zinc-600">│</span>
+        <span class="text-zinc-400">  Select a media category to begin              </span>
+        <span class="text-zinc-600">│</span>
+      </div>
+
+      <!-- Line 5: spacer -->
+      <div class="term-line" style="--d: 1.1s;">
+        <span class="text-zinc-700">│                                                     │</span>
+      </div>
+
+      <!-- Line 6: selected -->
+      <div class="term-line" style="--d: 1.3s;">
+        <span class="text-zinc-600">│  </span>
+        <span class="text-emerald-400">❯</span>
+        <span class="text-zinc-500">  </span>
+        <span class="text-zinc-100 font-medium">Video & Audio</span>
+        <span class="text-zinc-600">                                      │</span>
+      </div>
+
+      <!-- Line 7: hovered -->
+      <div class="term-line" style="--d: 1.5s;">
+        <span class="text-zinc-600">│    </span>
+        <span class="text-zinc-500">Image Manipulation</span>
+        <span class="text-zinc-600">                              │</span>
+      </div>
+
+      <!-- Line 8 -->
+      <div class="term-line" style="--d: 1.7s;">
+        <span class="text-zinc-600">│    </span>
+        <span class="text-zinc-500">Icon Generation</span>
+        <span class="text-zinc-600">                                │</span>
+      </div>
+
+      <!-- Line 9 -->
+      <div class="term-line" style="--d: 1.9s;">
+        <span class="text-zinc-600">│    </span>
+        <span class="text-zinc-500">Media Info</span>
+        <span class="text-zinc-600">                                  │</span>
+      </div>
+
+      <!-- Line 10: spacer -->
+      <div class="term-line" style="--d: 2.0s;">
+        <span class="text-zinc-700">│                                                     │</span>
+      </div>
+
+      <!-- Line 11: hint -->
+      <div class="term-line" style="--d: 2.2s;">
+        <span class="text-zinc-600">│  </span>
+        <span class="text-zinc-500">Use </span>
+        <span class="text-zinc-400">↑↓</span>
+        <span class="text-zinc-500">  to navigate · </span>
+        <span class="text-zinc-400">Enter</span>
+        <span class="text-zinc-500">  to select · </span>
+        <span class="text-zinc-400">Ctrl+C</span>
+        <span class="text-zinc-500">  to exit</span>
+        <span class="text-zinc-600">         │</span>
+      </div>
+
+      <!-- Line 12: bottom border -->
+      <div class="term-line" style="--d: 2.4s;">
+        <span class="text-zinc-700">└─────────────────────────────────────────────────┘</span>
+      </div>
+
+      <!-- Line 13: final prompt + cursor -->
+      <div class="term-line" style="--d: 2.6s;">
+        <span class="prompt">~ $</span>
+        <span class="cursor-block" aria-hidden="true"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .terminal-wrapper {
+    @apply w-full max-w-[600px] mx-auto;
+  }
+
+  .terminal-window {
+    @apply rounded-2xl overflow-hidden;
+    background: rgba(9, 9, 11, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(39, 39, 42, 0.5);
+    box-shadow:
+      0 0 0 1px rgba(39, 39, 42, 0.3),
+      0 16px 48px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(6, 182, 212, 0.04);
+    transition:
+      box-shadow 0.4s ease,
+      border-color 0.4s ease;
+  }
+
+  .group:hover .terminal-window {
+    border-color: rgba(39, 39, 42, 0.8);
+    box-shadow:
+      0 0 0 1px rgba(63, 63, 70, 0.4),
+      0 20px 64px rgba(0, 0, 0, 0.7),
+      0 0 120px rgba(6, 182, 212, 0.06);
+  }
+
+  .terminal-bar {
+    @apply flex items-center justify-between px-4 py-3;
+    background: rgba(24, 24, 27, 0.9);
+    border-bottom: 1px solid rgba(39, 39, 42, 0.4);
+  }
+
+  .terminal-title {
+    @apply text-xs font-mono tracking-wide;
+    color: #71717A;
+  }
+
+  .terminal-icon {
+    @apply flex items-center justify-center;
+  }
+
+  .dot {
+    @apply rounded-full;
+    width: 10px;
+    height: 10px;
+    transition: opacity 0.2s ease;
+  }
+
+  .dot-red { background: #FF5F57; }
+  .dot-yellow { background: #FFBD2E; }
+  .dot-green { background: #28C840; }
+
+  .terminal-body {
+    @apply px-5 py-4 font-mono text-sm leading-relaxed overflow-x-auto;
+    min-height: 290px;
+  }
+
+  .term-line {
+    @apply whitespace-pre m-0;
+    opacity: 0;
+    animation: termFadeIn 0.35s ease-out forwards;
+    animation-delay: var(--d, 0s);
+    line-height: 1.7;
+    letter-spacing: -0.01em;
+  }
+
+  .prompt {
+    color: #22C55E;
+    @apply font-medium;
+  }
+
+  .cmd {
+    color: #FAFAFA;
+  }
+
+  .cursor-block {
+    display: inline-block;
+    width: 7px;
+    height: 15px;
+    background: #06B6D4;
+    margin-left: 3px;
+    vertical-align: text-bottom;
+    border-radius: 1px;
+    animation: cursorBlink 1s step-end infinite;
+    box-shadow: 0 0 6px rgba(6, 182, 212, 0.4);
+  }
+
+  @keyframes termFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes cursorBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .term-line { opacity: 1; animation: none; }
+    .cursor-block { animation: none; opacity: 1; }
+  }
+</style>
