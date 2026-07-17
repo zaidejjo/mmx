@@ -2,7 +2,12 @@
 import "../styles/global.css";
 import TerminalSim from "../components/TerminalSim.astro";
 
-const installCommand = "bun add -g mmx-cli";
+const managers = [
+  { id: "bun", label: "bun", cmd: "bun add -g @zaidejjo/mmx" },
+  { id: "npm", label: "npm", cmd: "npm install -g @zaidejjo/mmx" },
+  { id: "pnpm", label: "pnpm", cmd: "pnpm add -g @zaidejjo/mmx" },
+  { id: "yarn", label: "yarn", cmd: "yarn global add @zaidejjo/mmx" },
+];
 
 const videoFeatures = [
   {
@@ -68,7 +73,7 @@ const perfItems = [
     icon: "shield",
     title: "Zero Bloat",
     desc: "No Electron. No huge dependencies. Just your media tools and a thin, elegant CLI layer that stays out of your way.",
-    stat: "&lt;2 MB footprint",
+    stat: "<2 MB footprint",
     color: "green",
   },
   {
@@ -106,8 +111,8 @@ const perfItems = [
           <a href="#features" class="text-sm text-zinc-400 hover:text-zinc-100 transition-colors duration-200">Features</a>
           <a href="#flags" class="text-sm text-zinc-400 hover:text-zinc-100 transition-colors duration-200">Flags</a>
           <a href="#performance" class="text-sm text-zinc-400 hover:text-zinc-100 transition-colors duration-200">Performance</a>
-          <a href="https://github.com/zaidmohd/mmx" target="_blank" rel="noopener noreferrer" class="text-sm text-zinc-400 hover:text-zinc-100 transition-colors duration-200">
-            GitHub <span class="inline-block ml-0.5 opacity-50">↗</span>
+          <a href="https://github.com/zaidejjo/mmx" target="_blank" rel="noopener noreferrer" class="text-zinc-400 hover:text-zinc-100 transition-colors duration-200" aria-label="GitHub">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
           </a>
         </div>
       </nav>
@@ -156,15 +161,26 @@ const perfItems = [
               <!-- Install command row -->
               <div class="flex flex-col sm:flex-row gap-3 items-start animate-slide-up" style="animation-delay: 0.3s;">
                 <div class="relative flex-1 w-full sm:w-auto">
+                  <!-- Package manager tabs -->
+                  <div class="flex gap-1 p-1 mb-2 rounded-lg bg-zinc-900/60 border border-zinc-800/50 w-fit" data-manager-group="hero" role="tablist" aria-label="Package manager">
+                    {managers.map((m) => (
+                      <button
+                        role="tab"
+                        data-manager={m.id}
+                        class="manager-tab px-3 py-1.5 text-xs font-mono rounded-md transition-all duration-200"
+                        aria-selected={m.id === "bun" ? "true" : "false"}
+                      >{m.label}</button>
+                    ))}
+                  </div>
+                  <!-- Command box -->
                   <div class="flex items-center glass-card rounded-xl overflow-hidden transition-all duration-300 group/cmd hover:border-zinc-700/60 hover:shadow-lg hover:shadow-black/30">
                     <span class="px-3.5 py-3 text-xs font-mono text-emerald-400 shrink-0 border-r border-zinc-800/50">$</span>
-                    <code class="flex-1 px-3.5 py-3 text-sm font-mono text-zinc-100 select-all whitespace-nowrap overflow-x-auto tracking-tight">
-                      {installCommand}
+                    <code class="cmd-display flex-1 px-3.5 py-3 text-sm font-mono text-zinc-100 select-all whitespace-nowrap overflow-x-auto tracking-tight" data-cmd-display>
+                      {managers[0].cmd}
                     </code>
                     <button
                       class="copy-btn px-3.5 py-3 text-zinc-500 hover:text-cyan-400 transition-colors duration-200 border-l border-zinc-800/50 hover:bg-zinc-800/50 shrink-0"
                       aria-label="Copy install command"
-                      data-copy={installCommand}
                     >
                       <svg class="copy-icon w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -177,7 +193,7 @@ const perfItems = [
                   </div>
                 </div>
                 <a
-                  href="https://github.com/zaidmohd/mmx"
+                  href="https://github.com/zaidejjo/mmx"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="inline-flex items-center gap-2 px-5 py-3 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:border-zinc-700/60 hover:bg-zinc-900/50 transition-all duration-200 whitespace-nowrap"
@@ -471,25 +487,39 @@ const perfItems = [
           </p>
 
           <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <div class="flex items-center glass-card rounded-xl overflow-hidden transition-all duration-300 hover:border-zinc-700/60 hover:shadow-lg hover:shadow-black/30">
-              <span class="px-4 py-3.5 text-xs font-mono text-emerald-400 shrink-0 border-r border-zinc-800/50">$</span>
-              <code class="px-4 py-3.5 text-sm font-mono text-zinc-100 whitespace-nowrap tracking-tight">{installCommand}</code>
-              <button
-                class="copy-btn px-4 py-3.5 text-zinc-500 hover:text-cyan-400 transition-colors duration-200 border-l border-zinc-800/50 hover:bg-zinc-800/50 shrink-0"
-                aria-label="Copy install command"
-                data-copy={installCommand}
-              >
-                <svg class="copy-icon w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                </svg>
-                <svg class="check-icon w-4 h-4 hidden" fill="none" viewBox="0 0 24 24" stroke="#22C55E" stroke-width="2">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-              </button>
+            <div>
+              <!-- Package manager tabs (synced with hero) -->
+              <div class="flex gap-1 p-1 mb-2 rounded-lg bg-zinc-900/60 border border-zinc-800/50 w-fit mx-auto" data-manager-group="cta" role="tablist" aria-label="Package manager">
+                {managers.map((m) => (
+                  <button
+                    role="tab"
+                    data-manager={m.id}
+                    class="manager-tab px-3 py-1.5 text-xs font-mono rounded-md transition-all duration-200"
+                    aria-selected={m.id === "bun" ? "true" : "false"}
+                  >{m.label}</button>
+                ))}
+              </div>
+              <div class="flex items-center glass-card rounded-xl overflow-hidden transition-all duration-300 hover:border-zinc-700/60 hover:shadow-lg hover:shadow-black/30">
+                <span class="px-4 py-3.5 text-xs font-mono text-emerald-400 shrink-0 border-r border-zinc-800/50">$</span>
+                <code class="cmd-display px-4 py-3.5 text-sm font-mono text-zinc-100 whitespace-nowrap tracking-tight" data-cmd-display>
+                  {managers[0].cmd}
+                </code>
+                <button
+                  class="copy-btn px-4 py-3.5 text-zinc-500 hover:text-cyan-400 transition-colors duration-200 border-l border-zinc-800/50 hover:bg-zinc-800/50 shrink-0"
+                  aria-label="Copy install command"
+                >
+                  <svg class="copy-icon w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                  <svg class="check-icon w-4 h-4 hidden" fill="none" viewBox="0 0 24 24" stroke="#22C55E" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                </button>
+              </div>
             </div>
             <a
-              href="https://github.com/zaidmohd/mmx"
+              href="https://github.com/zaidejjo/mmx"
               target="_blank"
               rel="noopener noreferrer"
               class="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl border border-zinc-800 text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:border-zinc-700/60 hover:bg-zinc-900/50 transition-all duration-200"
@@ -518,38 +548,60 @@ const perfItems = [
         <div class="flex items-center gap-6 text-xs text-zinc-600">
           <span>MIT License</span>
           <span class="hidden sm:inline">·</span>
-          <a href="https://github.com/zaidmohd/mmx" target="_blank" rel="noopener noreferrer" class="hover:text-zinc-300 transition-colors duration-200">GitHub</a>
+          <a href="https://github.com/zaidejjo/mmx" target="_blank" rel="noopener noreferrer" class="hover:text-zinc-300 transition-colors duration-200">GitHub</a>
           <span class="hidden sm:inline">·</span>
           <span>v0.1.0</span>
         </div>
       </div>
     </footer>
 
-    <!-- Copy script -->
+    <!-- Copy + tab switching script -->
     <script>
+      const COMMANDS = {
+        bun: "bun add -g @zaidejjo/mmx",
+        npm: "npm install -g @zaidejjo/mmx",
+        pnpm: "pnpm add -g @zaidejjo/mmx",
+        yarn: "yarn global add @zaidejjo/mmx",
+      };
+
+      // ── Tab switching ──
+      document.addEventListener("click", (e) => {
+        const tab = e.target.closest("[data-manager]");
+        if (!tab) return;
+
+        const manager = tab.getAttribute("data-manager");
+        if (!manager || !COMMANDS[manager]) return;
+
+        // Update all tab groups to reflect the selected manager
+        document.querySelectorAll("[data-manager-group]").forEach((group) => {
+          group.querySelectorAll("[data-manager]").forEach((t) => {
+            const isActive = t.getAttribute("data-manager") === manager;
+            t.setAttribute("aria-selected", isActive ? "true" : "false");
+          });
+        });
+
+        // Update all command displays
+        document.querySelectorAll("[data-cmd-display]").forEach((el) => {
+          el.textContent = COMMANDS[manager];
+        });
+      });
+
+      // ── Clipboard copy ──
       document.addEventListener("click", async (e) => {
-        const target = e.target;
-        if (!(target instanceof Element)) return;
-        const btn = target.closest("[data-copy]");
+        const btn = e.target.closest(".copy-btn");
         if (!btn) return;
 
-        const text = btn.getAttribute("data-copy") || "";
+        // Find the command display associated with this copy button
+        const container = btn.closest("[data-manager-group]")?.parentElement || btn.parentElement;
+        const cmdEl = container.querySelector("[data-cmd-display]") || btn.parentElement.querySelector("[data-cmd-display]");
+        const text = cmdEl ? cmdEl.textContent || "" : "";
+
+        if (!text) return;
+
         try {
           await navigator.clipboard.writeText(text);
-          const parent = btn.closest(".flex") || btn.parentElement;
-          if (parent) {
-            const copyIcon = parent.querySelector(".copy-icon");
-            const checkIcon = parent.querySelector(".check-icon");
-            if (copyIcon && checkIcon) {
-              copyIcon.classList.add("hidden");
-              checkIcon.classList.remove("hidden");
-              setTimeout(() => {
-                copyIcon.classList.remove("hidden");
-                checkIcon.classList.add("hidden");
-              }, 2000);
-            }
-          }
         } catch {
+          // Fallback
           const ta = document.createElement("textarea");
           ta.value = text;
           ta.style.position = "fixed";
@@ -559,12 +611,32 @@ const perfItems = [
           document.execCommand("copy");
           document.body.removeChild(ta);
         }
+
+        // Check icon animation
+        const copyIcon = btn.querySelector(".copy-icon");
+        const checkIcon = btn.querySelector(".check-icon");
+        if (copyIcon && checkIcon) {
+          copyIcon.classList.add("hidden");
+          checkIcon.classList.remove("hidden");
+          setTimeout(() => {
+            copyIcon.classList.remove("hidden");
+            checkIcon.classList.add("hidden");
+          }, 2000);
+        }
       });
     </script>
   </body>
 </html>
 
 <style>
+  /* ── Package Manager Tabs ── */
+  .manager-tab[aria-selected="true"] {
+    @apply bg-zinc-800 text-zinc-100 shadow-sm;
+  }
+  .manager-tab[aria-selected="false"] {
+    @apply text-zinc-500 hover:text-zinc-300;
+  }
+
   /* ── Bento Hub Cards ── */
   .bento-hub {
     @apply p-6 rounded-2xl border;

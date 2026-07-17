@@ -8,6 +8,8 @@
 
 **Zero emojis · Auto Nerd Font detection with graceful ASCII fallback · Clean UX abstractions over FFmpeg and ImageMagick**
 
+> **Website:** [mmx-cli.pages.dev](https://mmx-cli.pages.dev)
+
 ---
 
 ## Installation
