@@ -1,4 +1,5 @@
-import { resolve, extname, dirname, basename } from "node:path";
+import { resolve, extname, dirname, basename, join } from "node:path";
+import { readdirSync, statSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
 import type { FfmpegParams, ServiceResult } from "../types";
 import { isExistingFile } from "../utils/validators";
 
@@ -93,8 +94,227 @@ export function buildArgs(params: FfmpegParams): string[] {
   }
 }
 
+// ─── Info: get media metadata via ffprobe ────────────────────────────
+async function getMediaInfo(filePath: string): Promise<ServiceResult> {
+  if (!isExistingFile(filePath)) {
+    return { success: false, error: `File not found: ${filePath}` };
+  }
+
+  try {
+    const proc = Bun.spawn([
+      "ffprobe", "-v", "quiet",
+      "-print_format", "json",
+      "-show_format",
+      "-show_streams",
+      filePath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      return { success: false, error: "ffprobe failed — is this a valid media file?" };
+    }
+
+    const data = JSON.parse(stdout);
+    const fmt = data.format || {};
+    const streams = data.streams || [];
+
+    const videoStream = streams.find((s: Record<string, unknown>) => s.codec_type === "video");
+    const audioStream = streams.find((s: Record<string, unknown>) => s.codec_type === "audio");
+
+    const formatName = (fmt.format_name || "?").toUpperCase();
+    const dur = fmt.duration ? formatDurStr(parseFloat(fmt.duration)) : "?";
+    const size = fmt.size ? formatBytes(parseInt(fmt.size, 10)) : "?";
+    const bitrate = fmt.bit_rate ? `${(parseInt(fmt.bit_rate, 10) / 1000).toFixed(0)} Kbps` : "?";
+
+    const lines: string[] = [
+      `  Format       ${formatName}`,
+      `  Duration     ${dur}`,
+      `  Size         ${size}`,
+      `  Bitrate      ${bitrate}`,
+      "",
+    ];
+
+    if (videoStream) {
+      const codec = (videoStream.codec_name || "?").toUpperCase();
+      const w = videoStream.width ?? "?";
+      const h = videoStream.height ?? "?";
+      const fps = videoStream.r_frame_rate
+        ? evalFrac(videoStream.r_frame_rate as string)
+        : "?";
+      lines.push("  Video:");
+      lines.push(`    Codec:       ${codec}`);
+      lines.push(`    Resolution:  ${w}x${h}`);
+      lines.push(`    FPS:         ${fps}`);
+      lines.push("");
+    }
+
+    if (audioStream) {
+      const aCodec = (audioStream.codec_name || "?").toUpperCase();
+      const ch = audioStream.channels ?? "?";
+      const sr = audioStream.sample_rate ? `${(parseInt(audioStream.sample_rate as string, 10) / 1000).toFixed(0)} KHz` : "?";
+      lines.push("  Audio:");
+      lines.push(`    Codec:       ${aCodec}`);
+      lines.push(`    Channels:    ${ch}`);
+      lines.push(`    Sample Rate: ${sr}`);
+      lines.push("");
+    }
+
+    // Remove trailing blank line
+    if (lines[lines.length - 1] === "") lines.pop();
+
+    return { success: true, data: lines.join("\n") };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to read media info: ${msg}` };
+  }
+}
+
+// ─── Bulk Video Convert ──────────────────────────────────────────────
+const VIDEO_EXTS = ["mp4", "mkv", "mov", "avi", "webm", "m4v", "flv", "wmv"];
+
+async function bulkVideoConvert(params: FfmpegParams): Promise<ServiceResult> {
+  const dir = params.input;
+  const outFmt = params.format || "mp4";
+  const outDir = resolve(params.output || `${dir}/converted`);
+  const CONCURRENCY = 4;
+
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter(f => {
+      const ext = extname(f).toLowerCase().slice(1);
+      return VIDEO_EXTS.includes(ext);
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Cannot read directory: ${msg}` };
+  }
+
+  if (files.length === 0) {
+    return { success: false, error: `No supported video files in ${dir}` };
+  }
+
+  if (!existsSync(outDir)) {
+    try { mkdirSync(outDir, { recursive: true }); } catch {
+      return { success: false, error: `Cannot create output directory: ${outDir}` };
+    }
+  }
+
+  const convertOne = async (file: string): Promise<boolean> => {
+    const src = join(dir, file);
+    const outFile = `${basename(file, extname(file))}.${outFmt}`;
+    const dest = join(outDir, outFile);
+
+    const proc = Bun.spawn(["ffmpeg", "-i", src, "-y", dest], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  };
+
+  let converted = 0;
+  try {
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+      const batch = files.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(batch.map(convertOne));
+      converted += results.filter(Boolean).length;
+    }
+    return { success: true, outputPath: outDir };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+// ─── Join / Concatenate Videos ───────────────────────────────────────
+async function joinVideos(params: FfmpegParams): Promise<ServiceResult> {
+  const fileList = params.inputs;
+  if (!fileList || fileList.length < 2) {
+    return { success: false, error: "Need at least 2 files to join" };
+  }
+
+  // Create temp file list for FFmpeg concat demuxer
+  const tmpFile = resolve("/tmp", `mmx-concat-${Date.now()}.txt`);
+  const lines = fileList.map(f => `file '${f.replace(/'/g, "'\\''")}'`);
+  writeFileSync(tmpFile, lines.join("\n") + "\n");
+
+  const outPath = resolve(params.output || `${dirname(fileList[0])}/joined_${basename(fileList[0])}`);
+
+  try {
+    const proc = Bun.spawn([
+      "ffmpeg",
+      "-f", "concat",
+      "-safe", "0",
+      "-i", tmpFile,
+      "-c", "copy",
+      "-y", outPath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    const ffmpegErr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    unlinkSync(tmpFile);
+
+    if (exitCode !== 0) {
+      const lines = ffmpegErr.split("\n").filter(l =>
+        /[Ee]rror|Invalid|Cannot|failed|Unknown|No such|not found/i.test(l),
+      );
+      const firstError = lines.length > 0
+        ? lines[0].trim()
+        : ffmpegErr.split("\n").find(l => l.trim().length > 0)?.trim() || "";
+      const msg = firstError
+        ? firstError.replace(/\[[^\]]*\]\s*/, "").substring(0, 300)
+        : `FFmpeg exited with code ${exitCode}`;
+      return { success: false, error: msg };
+    }
+
+    return { success: true, outputPath: outPath };
+  } catch (err) {
+    // Clean up temp file on error
+    try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+// ─── Small Helpers ───────────────────────────────────────────────────
+function formatDurStr(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function evalFrac(frac: string): string {
+  const parts = frac.split("/");
+  if (parts.length !== 2) return frac;
+  const n = parseFloat(parts[0]);
+  const d = parseFloat(parts[1]);
+  if (d === 0) return frac;
+  return (n / d).toFixed(2);
+}
+
 // ─── Execute FFmpeg (no spinner — caller provides feedback) ─────────
 export async function runFfmpeg(params: FfmpegParams): Promise<ServiceResult> {
+  // Route non-standard actions to dedicated handlers
+  if (params.action === "info") {
+    return getMediaInfo(params.input);
+  }
+  if (params.action === "bulk-convert") {
+    return bulkVideoConvert(params);
+  }
+  if (params.action === "join") {
+    return joinVideos(params);
+  }
+
+  // Standard actions require a valid input file
   if (!isExistingFile(params.input)) {
     return { success: false, error: `Input file not found: ${params.input}` };
   }

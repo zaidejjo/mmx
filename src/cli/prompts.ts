@@ -6,7 +6,7 @@ import { fileBrowser, directoryBrowser } from "./filebrowser";
 import { runFfmpeg } from "../services/ffmpeg";
 import { runMagick } from "../services/imagemagick";
 import { createSpinner } from "../utils/spinner";
-import { validateTimestamp, validateScale, validateTrimRange } from "../utils/validators";
+import { validateTimestamp, validateScale, validateTrimRange, isExistingFile } from "../utils/validators";
 import type { Tool, FfmpegAction, MagickAction, VideoFormat, AudioFormat, ImageFormat } from "../types";
 
 // ─── Supported extension lists (lowercase, no dot) ──────────────────
@@ -96,6 +96,19 @@ function defaultOutputPath(inputPath: string, action: string, format?: string): 
 async function runFfmpegWithFeedback(
   params: Parameters<typeof runFfmpeg>[0],
 ): Promise<boolean> {
+  // info action: no spinner, just display data
+  if (params.action === "info") {
+    const result = await runFfmpeg(params);
+    if (result.success && result.data) {
+      console.log(pc.dim("  ─────────────────────────"));
+      console.log(result.data);
+      console.log(pc.dim("  ─────────────────────────"));
+      return true;
+    }
+    p.log.error(pc.red(`  ${result.error || "info failed"}`));
+    return false;
+  }
+
   const spin = createSpinner();
   spin.start(`${params.action} ...`);
   const result = await runFfmpeg(params);
@@ -132,7 +145,7 @@ async function selectCategory(): Promise<UserCategory> {
       {
         value: "video-audio",
         label: "Video & Audio",
-        hint: "convert, trim, extract audio, make gif",
+        hint: "convert, trim, info, bulk convert, join",
       },
       {
         value: "image",
@@ -158,6 +171,9 @@ async function selectFfmpegAction(): Promise<FfmpegAction> {
       { value: "extract-audio", label: "Extract Audio", hint: "320kbps MP3 / WAV" },
       { value: "strip-audio", label: "Strip Audio", hint: "mute, no re-encode" },
       { value: "make-gif", label: "Make GIF", hint: "high-quality palette" },
+      { value: "info", label: "Media Info", hint: "codecs, resolution, duration" },
+      { value: "bulk-convert", label: "Bulk Convert", hint: "batch video format" },
+      { value: "join", label: "Join Videos", hint: "concatenate multiple files" },
     ],
   });
   if (p.isCancel(action)) {
@@ -494,6 +510,92 @@ async function ffmpegFlow(): Promise<void> {
         trimStart: g.trimStart,
         trimEnd: g.trimEnd,
         fps: Number(g.fps) || 15,
+      });
+      break;
+    }
+
+    // ─── Media Info ───────────────────────────────────────────────────
+    case "info": {
+      inputFile = await fileBrowser({
+        message: "Select video or audio file",
+        allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
+      });
+
+      await runFfmpegWithFeedback({ action: "info", input: inputFile });
+      break;
+    }
+
+    // ─── Bulk Video Convert ───────────────────────────────────────────
+    case "bulk-convert": {
+      inputFile = await directoryBrowser({
+        message: "Select directory containing videos",
+      });
+      fmt = await selectVideoFormat();
+
+      const defaultOutDir = resolve(inputFile, fmt as string);
+      const outDir = await p.text({
+        message: pc.dim("Output directory  .  press Enter to accept"),
+        initialValue: defaultOutDir,
+        validate(value) {
+          if (!value || value.trim().length === 0) return "Directory path is required";
+          return;
+        },
+      });
+      if (p.isCancel(outDir)) { p.cancel("cancelled"); process.exit(0); }
+
+      await runFfmpegWithFeedback({
+        action: "bulk-convert",
+        input: inputFile,
+        output: resolve((outDir as string).trim()),
+        format: fmt as VideoFormat,
+      });
+      break;
+    }
+
+    // ─── Join Videos ──────────────────────────────────────────────────
+    case "join": {
+      p.log.step(pc.dim("Select files in order (at least 2)"));
+
+      const videoFiles: string[] = [];
+
+      // First 2 files: required, add without prompt
+      for (let i = 0; i < 2; i++) {
+        const f = await fileBrowser({
+          message: `Select video file #${i + 1}`,
+          allowedExtensions: VIDEO_EXTS,
+        });
+        videoFiles.push(f);
+      }
+
+      // Optional additional files
+      let addMore = true;
+      while (addMore) {
+        const more = await p.confirm({
+          message: pc.dim(`Add another file? (${videoFiles.length} selected)`),
+          initialValue: false,
+        });
+        if (p.isCancel(more)) { p.cancel("cancelled"); process.exit(0); }
+        if (!more) break;
+
+        const f = await fileBrowser({
+          message: `Select video file #${videoFiles.length + 1}`,
+          allowedExtensions: VIDEO_EXTS,
+        });
+        videoFiles.push(f);
+      }
+
+      // Default output: next to first file
+      const firstDir = dirname(videoFiles[0]);
+      const firstBase = basename(videoFiles[0], extname(videoFiles[0]));
+      const defaultOut = resolve(firstDir, `${firstBase}_joined.mp4`);
+
+      outputPath = await askOutput(defaultOut, "Output path for joined file");
+
+      await runFfmpegWithFeedback({
+        action: "join",
+        input: videoFiles[0],
+        inputs: videoFiles,
+        output: outputPath,
       });
       break;
     }

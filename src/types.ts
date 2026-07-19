@@ -7,7 +7,10 @@ export type FfmpegAction =
   | "trim"
   | "extract-audio"
   | "strip-audio"
-  | "make-gif";
+  | "make-gif"
+  | "info"
+  | "bulk-convert"
+  | "join";
 
 // ─── ImageMagick Actions ───────────────────────────────────────────
 export type MagickAction =
@@ -44,6 +47,8 @@ export interface ParsedArgs {
 export interface FfmpegParams {
   action: FfmpegAction;
   input: string;
+  /** Multiple inputs for join/concat actions. */
+  inputs?: string[];
   output?: string;
   format?: VideoFormat | AudioFormat;
   trimStart?: string;
@@ -64,4 +69,6 @@ export interface ServiceResult {
   success: boolean;
   outputPath?: string;
   error?: string;
+  /** Free-form data for info/inspect actions. */
+  data?: string;
 }
