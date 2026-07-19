@@ -10,38 +10,19 @@ function buildArgs(params: MagickParams): string[] {
   const ext = extname(input).toLowerCase();
   const base = basename(input, ext);
 
+  // NOTE: bulk-convert and icon-bundle are handled in dedicated helpers
+  // before this function is called, so they are intentionally omitted here.
+
   switch (action) {
     case "convert": {
       const outPath = output || `${base}.${format || "png"}`;
       return [input, outPath];
     }
 
-    case "bulk-convert": {
-      const outFmt = format || "png";
-      const outDir = output || `${input}/${format || "converted"}`;
-      return ["mogrify", "-path", outDir, "-format", outFmt.toUpperCase(), `${input}/*.${ext}`];
-    }
-
     case "smart-scale": {
       const outPath = output || `${base}-scaled${ext || ".png"}`;
       const dim = scale || "50%";
       return [input, "-filter", "Lanczos", "-resize", dim, "-unsharp", "0.5x0.5+0.7+0.02", outPath];
-    }
-
-    case "icon-bundle": {
-      const icoPath = output || `${base}.ico`;
-      const icnsPath = output
-        ? join(dirname(output), `${basename(output, extname(output))}.icns`)
-        : `${base}.icns`;
-      return [
-        input,
-        "-define", "icon:auto-resize=16,32,48,64,128,256",
-        icoPath,
-        "&&",
-        input,
-        "-define", "icon:auto-resize=16,32,48,64,128,256",
-        icnsPath,
-      ];
     }
 
     case "web-optimize": {
@@ -52,6 +33,7 @@ function buildArgs(params: MagickParams): string[] {
     }
 
     default:
+      // bulk-convert and icon-bundle should never reach here
       throw new Error(`Unknown Magick action: ${action}`);
   }
 }
@@ -59,36 +41,51 @@ function buildArgs(params: MagickParams): string[] {
 // ─── Bulk Convert Helper ───────────────────────────────────────────
 async function bulkConvert(params: MagickParams): Promise<ServiceResult> {
   const { input, format } = params;
-  const outFmt = (format || "png").toUpperCase();
   const outDir = resolve(params.output || `${input}/converted`);
 
+  // Reasonable concurrency limit to avoid overwhelming the system
+  const CONCURRENCY = 4;
+
+  let files: string[];
   try {
-    const files = readdirSync(input).filter(f => {
+    files = readdirSync(input).filter(f => {
       const e = getExtension(f);
       return IMAGE_EXTENSIONS.includes(e);
     });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Cannot read directory: ${msg}` };
+  }
 
-    if (files.length === 0) {
-      return { success: false, error: `No supported images in ${input}` };
+  if (files.length === 0) {
+    return { success: false, error: `No supported images in ${input}` };
+  }
+
+  // Convert a single file, return true on success
+  const convertOne = async (file: string): Promise<boolean> => {
+    const src = join(input, file);
+    const outFile = `${basename(file, extname(file))}.${format || "png"}`;
+    const dest = join(outDir, outFile);
+
+    const proc = Bun.spawn(["magick", src, dest], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      // continue converting other files even if one fails
+      return false;
     }
+    return true;
+  };
 
+  try {
     let converted = 0;
-    for (const file of files) {
-      const src = join(input, file);
-      const outFile = `${basename(file, extname(file))}.${format || "png"}`;
-      const dest = join(outDir, outFile);
-
-      const proc = Bun.spawn(["magick", src, dest], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const exitCode = await proc.exited;
-
-      if (exitCode !== 0) {
-        const stderr = await new Response(proc.stderr).text();
-        // continue converting other files even if one fails
-        continue;
-      }
-      converted++;
+    // Run in batches to limit concurrency
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+      const batch = files.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(batch.map(convertOne));
+      converted += results.filter(Boolean).length;
     }
 
     return { success: true, outputPath: outDir };
@@ -118,8 +115,8 @@ async function iconBundle(params: MagickParams): Promise<ServiceResult> {
     );
     const exit1 = await proc1.exited;
     if (exit1 !== 0) {
-      const stderr = await new Response(proc1.stderr).text();
-      return { success: false, error: `ICO generation failed: ${stderr.slice(0, 200)}` };
+      const errMsg = await new Response(proc1.stderr).text();
+      return { success: false, error: `ICO generation failed: ${errMsg.slice(0, 200)}` };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -133,8 +130,8 @@ async function iconBundle(params: MagickParams): Promise<ServiceResult> {
     );
     const exit2 = await proc2.exited;
     if (exit2 !== 0) {
-      const stderr = await new Response(proc2.stderr).text();
-      return { success: false, error: `ICNS generation failed: ${stderr.slice(0, 200)}` };
+      const errMsg = await new Response(proc2.stderr).text();
+      return { success: false, error: `ICNS generation failed: ${errMsg.slice(0, 200)}` };
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -166,36 +163,26 @@ export async function runMagick(params: MagickParams): Promise<ServiceResult> {
   }
 
   const args = buildArgs(params);
-  let outputPath: string;
-
-  if (params.action === "convert") {
-    const outFmt = params.format || "png";
-    const e = extname(params.input);
-    const b = basename(params.input, e);
-    outputPath = resolve(params.output || `${b}.${outFmt}`);
-  } else if (params.action === "smart-scale") {
-    const e = extname(params.input);
-    const b = basename(params.input, e);
-    outputPath = resolve(params.output || `${b}-scaled${e}`);
-  } else if (params.action === "web-optimize") {
-    const outFmt = params.format || "webp";
-    const e = extname(params.input);
-    const b = basename(params.input, e);
-    outputPath = resolve(params.output || `${b}-optimized.${outFmt}`);
-  } else {
-    outputPath = resolve(args[args.length - 1]);
-  }
+  // The output path is always the last argument in the args array built by buildArgs
+  const outputPath = resolve(args[args.length - 1]);
 
   try {
     const proc = Bun.spawn(["magick", ...args], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const exitCode = await proc.exited;
-    const stderr = await new Response(proc.stderr).text();
+    const magickStderr = await new Response(proc.stderr).text();
 
     if (exitCode !== 0) {
-      const lines = stderr.split("\n").filter(l => l.includes("Error") || l.includes("error"));
-      const msg = lines.length > 0 ? lines[0].trim() : `ImageMagick exited with code ${exitCode}`;
+      const lines = magickStderr.split("\n").filter(l =>
+        /[Ee]rror|Invalid|Cannot|failed|Unknown|No such|not found/i.test(l),
+      );
+      const firstError = lines.length > 0
+        ? lines[0].trim()
+        : magickStderr.split("\n").find(l => l.trim().length > 0)?.trim() || "";
+      const msg = firstError
+        ? firstError.replace(/\[[^\]]*\]\s*/, "").substring(0, 300)
+        : `ImageMagick exited with code ${exitCode}`;
       return { success: false, error: msg };
     }
 
