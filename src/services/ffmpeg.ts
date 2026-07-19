@@ -1,5 +1,6 @@
 import { resolve, extname, dirname, basename, join } from "node:path";
 import { readdirSync, statSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import type { FfmpegParams, ServiceResult } from "../types";
 import { isExistingFile } from "../utils/validators";
 
@@ -371,6 +372,80 @@ async function optimizeVideo(params: FfmpegParams): Promise<ServiceResult> {
   }
 }
 
+// ─── AI Audio Denoise ────────────────────────────────────────────────
+const MODEL_URL = "https://raw.githubusercontent.com/xiph/rnnoise/master/models/bd.rnnn";
+const MODEL_DIR = join(homedir(), ".config", "mmx", "models");
+const MODEL_PATH = join(MODEL_DIR, "bd.rnnn");
+
+/** Ensure the RNNoise model file exists locally; download if missing. */
+async function ensureDenoiseModel(): Promise<string | null> {
+  if (existsSync(MODEL_PATH)) return MODEL_PATH;
+  try {
+    mkdirSync(MODEL_DIR, { recursive: true });
+    const resp = await fetch(MODEL_URL);
+    if (!resp.ok) return null;
+    const buf = await resp.arrayBuffer();
+    Bun.write(MODEL_PATH, new Uint8Array(buf));
+    return MODEL_PATH;
+  } catch {
+    return null;
+  }
+}
+
+async function denoiseAudio(params: FfmpegParams): Promise<ServiceResult> {
+  const input = params.input;
+  if (!isExistingFile(input)) {
+    return { success: false, error: `Input file not found: ${input}` };
+  }
+
+  // Ensure model is downloaded
+  const modelPath = await ensureDenoiseModel();
+  if (!modelPath) {
+    return { success: false, error: "Failed to download RNNoise model — check internet connection" };
+  }
+
+  const ext = extname(input).toLowerCase();
+  const base = basename(input, ext);
+  const outPath = resolve(
+    params.output || `${dirname(input)}/${base}_denoised${ext}`,
+  );
+
+  const args = [
+    "-i", input,
+    "-c:v", "copy",
+    "-af", `arnndn=model='${modelPath}'`,
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-y", outPath,
+  ];
+
+  try {
+    const proc = Bun.spawn(["ffmpeg", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const ffmpegErr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      const errLines = ffmpegErr.split("\n").filter(l =>
+        /[Ee]rror|Invalid|Cannot|failed|Unknown|No such|not found/i.test(l),
+      );
+      const firstError = errLines.length > 0
+        ? errLines[0].trim()
+        : ffmpegErr.split("\n").find(l => l.trim().length > 0)?.trim() || "";
+      const msg = firstError
+        ? firstError.replace(/\[[^\]]*\]\s*/, "").substring(0, 300)
+        : `FFmpeg exited with code ${exitCode}`;
+      return { success: false, error: msg };
+    }
+
+    return { success: true, outputPath: outPath };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
 // ─── Small Helpers ───────────────────────────────────────────────────
 function formatDurStr(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -409,6 +484,9 @@ export async function runFfmpeg(params: FfmpegParams): Promise<ServiceResult> {
   }
   if (params.action === "optimize") {
     return optimizeVideo(params);
+  }
+  if (params.action === "denoise") {
+    return denoiseAudio(params);
   }
 
   // Standard actions require a valid input file

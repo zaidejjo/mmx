@@ -11,7 +11,8 @@ export type FfmpegAction =
   | "info"
   | "bulk-convert"
   | "join"
-  | "optimize";
+  | "optimize"
+  | "denoise";
 
 // ─── ImageMagick Actions ───────────────────────────────────────────
 export type MagickAction =

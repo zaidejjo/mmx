@@ -68,6 +68,7 @@ export function showHelp(): void {
   console.log(`    bulk-convert   ${pc.dim("Batch convert all videos in a directory")}`);
   console.log(`    join           ${pc.dim("Join multiple video files into one")}`);
   console.log(`    optimize       ${pc.dim("Smart compress for Discord/Slack limits")}`);
+  console.log(`    denoise        ${pc.dim("AI audio denoise via RNNoise (studio quality)")}`);
   console.log();
   console.log(pc.bold("  ImageMagick Actions:"));
   console.log(`    convert        ${pc.dim("Single image format conversion")}`);

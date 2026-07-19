@@ -177,6 +177,7 @@ async function selectFfmpegAction(): Promise<FfmpegAction> {
       { value: "bulk-convert", label: "Bulk Convert", hint: "batch video format" },
       { value: "join", label: "Join Videos", hint: "concatenate multiple files" },
       { value: "optimize", label: "Smart Optimize", hint: "compress for Discord/Slack" },
+      { value: "denoise", label: "AI Audio Denoise", hint: "studio-quality RNNoise" },
     ],
   });
   if (p.isCancel(action)) {
@@ -631,6 +632,27 @@ async function ffmpegFlow(): Promise<void> {
         input: inputFile,
         output: outputPath,
         platform: plat,
+      });
+      break;
+    }
+
+    // ─── AI Audio Denoise ────────────────────────────────────────────
+    case "denoise": {
+      inputFile = await fileBrowser({
+        message: "Select video or audio file to denoise",
+        allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
+      });
+
+      const baseName = basename(inputFile, extname(inputFile));
+      const ext = extname(inputFile);
+      const defaultOut = resolve(dirname(inputFile), `${baseName}_denoised${ext}`);
+
+      outputPath = await askOutput(defaultOut, "Output path");
+
+      await runFfmpegWithFeedback({
+        action: "denoise",
+        input: inputFile,
+        output: outputPath,
       });
       break;
     }
