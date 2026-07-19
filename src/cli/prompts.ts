@@ -67,6 +67,7 @@ function smartName(inputPath: string, action: string, format?: string): string {
     "smart-scale":  "_scaled",
     "icon-bundle":  "_icon",
     "web-optimize": "_optimized",
+    optimize:       "_optimized",
   };
 
   const FORMATS: Record<string, string> = {
@@ -78,6 +79,7 @@ function smartName(inputPath: string, action: string, format?: string): string {
     "smart-scale":  "png",
     "icon-bundle":  "ico",
     "web-optimize": "webp",
+    optimize:       "mp4",
   };
 
   const suffix = SUFFIXES[action] ?? `_${action}`;
@@ -174,6 +176,7 @@ async function selectFfmpegAction(): Promise<FfmpegAction> {
       { value: "info", label: "Media Info", hint: "codecs, resolution, duration" },
       { value: "bulk-convert", label: "Bulk Convert", hint: "batch video format" },
       { value: "join", label: "Join Videos", hint: "concatenate multiple files" },
+      { value: "optimize", label: "Smart Optimize", hint: "compress for Discord/Slack" },
     ],
   });
   if (p.isCancel(action)) {
@@ -596,6 +599,38 @@ async function ffmpegFlow(): Promise<void> {
         input: videoFiles[0],
         inputs: videoFiles,
         output: outputPath,
+      });
+      break;
+    }
+
+    // ─── Smart Optimize for Platform ─────────────────────────────────
+    case "optimize": {
+      inputFile = await fileBrowser({
+        message: "Select video file to compress",
+        allowedExtensions: VIDEO_EXTS,
+      });
+
+      const platform = await p.select({
+        message: pc.dim("Target platform"),
+        options: [
+          { value: "discord", label: "Discord Free", hint: "target 9.5 MB (limit 10 MB)" },
+          { value: "nitro", label: "Discord Nitro / Slack", hint: "target 48 MB (limit 50 MB)" },
+        ],
+      });
+      if (p.isCancel(platform)) { p.cancel("cancelled"); process.exit(0); }
+
+      const plat = platform as string;
+      const platSuffix = plat === "nitro" ? "nitro" : "discord";
+      const baseName = basename(inputFile, extname(inputFile));
+      const defaultOut = resolve(dirname(inputFile), `${baseName}_optimized_${platSuffix}.mp4`);
+
+      outputPath = await askOutput(defaultOut, "Output path");
+
+      await runFfmpegWithFeedback({
+        action: "optimize",
+        input: inputFile,
+        output: outputPath,
+        platform: plat,
       });
       break;
     }

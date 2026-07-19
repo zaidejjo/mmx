@@ -277,6 +277,100 @@ async function joinVideos(params: FfmpegParams): Promise<ServiceResult> {
   }
 }
 
+// ─── Smart Optimize for Platforms ────────────────────────────────────
+async function optimizeVideo(params: FfmpegParams): Promise<ServiceResult> {
+  const input = params.input;
+  const platform = params.platform || "discord";
+  const targetMB = platform === "nitro" ? 48 : 9.5;
+  const targetBytes = targetMB * 1024 * 1024;
+  const platformLabel = platform === "nitro" ? "Discord Nitro / Slack" : "Discord Free";
+
+  if (!isExistingFile(input)) {
+    return { success: false, error: `Input file not found: ${input}` };
+  }
+
+  // 1. Get duration via ffprobe
+  let duration: number;
+  try {
+    const proc = Bun.spawn([
+      "ffprobe", "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      input,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const out = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      return { success: false, error: "ffprobe failed — is this a valid media file?" };
+    }
+    duration = parseFloat(out.trim());
+    if (Number.isNaN(duration) || duration <= 0) {
+      return { success: false, error: "Cannot read video duration" };
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `ffprobe failed: ${msg}` };
+  }
+
+  // 2. Calculate bitrates
+  const totalBitrate = Math.floor((targetBytes * 8) / duration);       // bps
+  const audioBitrate = 128000;                                          // 128 Kbps
+  const videoBitrate = totalBitrate - audioBitrate;
+
+  if (videoBitrate < 50000) {
+    const estSizeKB = ((videoBitrate + audioBitrate) * duration) / 8 / 1024;
+    return {
+      success: false,
+      error: `Video too long (${formatDurStr(duration)}) for ${platformLabel} (${targetMB}MB target). `
+           + `Estimated size at minimum bitrate: ${(estSizeKB / 1024).toFixed(1)}MB. `
+           + `Try trimming first or choose a shorter clip.`,
+    };
+  }
+
+  // 3. Run FFmpeg with calculated bitrates
+  const base = basename(input, extname(input).toLowerCase());
+  const outPath = resolve(
+    params.output || `${dirname(input)}/${base}_optimized_${platform}.mp4`,
+  );
+
+  const args = [
+    "-i", input,
+    "-c:v", "libx264",
+    "-b:v", String(videoBitrate),
+    "-preset", "medium",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-movflags", "+faststart",
+    "-y", outPath,
+  ];
+
+  try {
+    const proc = Bun.spawn(["ffmpeg", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const ffmpegErr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      const errLines = ffmpegErr.split("\n").filter(l =>
+        /[Ee]rror|Invalid|Cannot|failed|Unknown|No such|not found/i.test(l),
+      );
+      const firstError = errLines.length > 0
+        ? errLines[0].trim()
+        : ffmpegErr.split("\n").find(l => l.trim().length > 0)?.trim() || "";
+      const msg = firstError
+        ? firstError.replace(/\[[^\]]*\]\s*/, "").substring(0, 300)
+        : `FFmpeg exited with code ${exitCode}`;
+      return { success: false, error: msg };
+    }
+
+    return { success: true, outputPath: outPath };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
 // ─── Small Helpers ───────────────────────────────────────────────────
 function formatDurStr(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -312,6 +406,9 @@ export async function runFfmpeg(params: FfmpegParams): Promise<ServiceResult> {
   }
   if (params.action === "join") {
     return joinVideos(params);
+  }
+  if (params.action === "optimize") {
+    return optimizeVideo(params);
   }
 
   // Standard actions require a valid input file

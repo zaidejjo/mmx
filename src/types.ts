@@ -10,7 +10,8 @@ export type FfmpegAction =
   | "make-gif"
   | "info"
   | "bulk-convert"
-  | "join";
+  | "join"
+  | "optimize";
 
 // ─── ImageMagick Actions ───────────────────────────────────────────
 export type MagickAction =
@@ -41,6 +42,7 @@ export interface ParsedArgs {
   trimEnd?: string;
   fps?: number;
   scale?: string;
+  platform?: string;
 }
 
 // ─── Service Execution Params ──────────────────────────────────────
@@ -51,6 +53,8 @@ export interface FfmpegParams {
   inputs?: string[];
   output?: string;
   format?: VideoFormat | AudioFormat;
+  /** Target platform for optimize action ("discord" | "nitro"). */
+  platform?: string;
   trimStart?: string;
   trimEnd?: string;
   fps?: number;
