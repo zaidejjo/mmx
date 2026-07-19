@@ -1,6 +1,6 @@
 {
   "name": "@zaidejjo/mmx",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Media Manipulation eXpress — minimalist CLI media tool powered by Bun, FFmpeg & ImageMagick",
   "type": "module",
   "bin": {
@@ -15,6 +15,8 @@
     "prepublishOnly": "bun run build && bun run fix-shebang",
     "start": "bun run src/index.ts",
     "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
     "dev": "bun --watch src/index.ts"
   },
   "dependencies": {

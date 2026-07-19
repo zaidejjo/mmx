@@ -1,3 +1,4 @@
 node_modules/
 *.tsbuildinfo
 dist/
+img_vid_test/

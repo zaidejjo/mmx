@@ -4,7 +4,8 @@ import { isExistingFile } from "../utils/validators";
 
 // ─── Build FFmpeg Argument Arrays ──────────────────────────────────
 
-function buildArgs(params: FfmpegParams): string[] {
+/** Exported for unit testing — prefer using runFfmpeg() in production code. */
+export function buildArgs(params: FfmpegParams): string[] {
   const { action, input, output, format, trimStart, trimEnd, fps } = params;
   const ext = extname(input).toLowerCase();
   const base = basename(input, ext);
@@ -28,19 +29,28 @@ function buildArgs(params: FfmpegParams): string[] {
       const outExt = ext || ".mp4";
       const outPath = output || `${base}-trimmed${outExt}`;
       const args: string[] = [];
+      // -ss before -i = fast seek (keyframe-aligned start)
       if (trimStart) args.push("-ss", trimStart);
+      args.push("-i", input);
+      // -to after -i = output stop position (not input duration limit)
       if (trimEnd) args.push("-to", trimEnd);
-      args.push("-i", input, "-c", "copy", "-y", outPath);
+      // -c copy = stream copy (no re-encode, lossless cut)
+      // -avoid_negative_ts make_zero and -copyts ensure correct timestamps
+      // when seeking to a keyframe before the requested -ss position
+      args.push("-c", "copy", "-avoid_negative_ts", "make_zero", "-copyts", "-y", outPath);
       return args;
     }
 
     case "extract-audio": {
       const outFmt = format || "mp3";
       const outPath = output || `${base}-audio.${outFmt}`;
+      // -map 0:a explicitly selects all audio streams to avoid including
+      // other stream types (data, subtitles, etc.) when using -vn
       if (outFmt === "mp3") {
         return [
           "-i", input,
           "-vn",
+          "-map", "0:a",
           "-c:a", "libmp3lame",
           "-b:a", "320k",
           "-y", outPath,
@@ -49,6 +59,7 @@ function buildArgs(params: FfmpegParams): string[] {
       return [
         "-i", input,
         "-vn",
+        "-map", "0:a",
         "-c:a", "pcm_s16le",
         "-y", outPath,
       ];
@@ -63,14 +74,18 @@ function buildArgs(params: FfmpegParams): string[] {
     case "make-gif": {
       const outPath = output || `${base}.gif`;
       const gifFps = fps ?? 15;
-      return [
-        "-ss", trimStart || "0",
-        "-to", trimEnd || "10",
-        "-i", input,
+      const args: string[] = [];
+      // -ss before -i = fast input seek
+      args.push("-ss", trimStart || "0");
+      args.push("-i", input);
+      // -to after -i = output stop position
+      if (trimEnd) args.push("-to", trimEnd);
+      args.push(
         "-vf",
         `fps=${gifFps},scale=iw/2:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`,
         "-y", outPath,
-      ];
+      );
+      return args;
     }
 
     default:
@@ -92,12 +107,21 @@ export async function runFfmpeg(params: FfmpegParams): Promise<ServiceResult> {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const stderr = await new Response(proc.stderr).text();
+    const ffmpegErr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-      const lines = stderr.split("\n").filter(l => l.includes("Error") || l.includes("error"));
-      const msg = lines.length > 0 ? lines[0].trim() : `FFmpeg exited with code ${exitCode}`;
+      // FFmpeg uses various error patterns: "Error", "error", "Invalid",
+      // "Cannot", "failed", "Unknown", "No such", etc. — cast a wider net.
+      const lines = ffmpegErr.split("\n").filter(l =>
+        /[Ee]rror|Invalid|Cannot|failed|Unknown|No such|not found/i.test(l),
+      );
+      const firstError = lines.length > 0
+        ? lines[0].trim()
+        : ffmpegErr.split("\n").find(l => l.trim().length > 0)?.trim() || "";
+      const msg = firstError
+        ? firstError.replace(/\[[^\]]*\]\s*/, "").substring(0, 300)
+        : `FFmpeg exited with code ${exitCode}`;
       return { success: false, error: msg };
     }
 

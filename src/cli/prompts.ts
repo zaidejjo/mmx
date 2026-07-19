@@ -6,7 +6,7 @@ import { fileBrowser, directoryBrowser } from "./filebrowser";
 import { runFfmpeg } from "../services/ffmpeg";
 import { runMagick } from "../services/imagemagick";
 import { createSpinner } from "../utils/spinner";
-import { validateTimestamp, validateScale } from "../utils/validators";
+import { validateTimestamp, validateScale, validateTrimRange } from "../utils/validators";
 import type { Tool, FfmpegAction, MagickAction, VideoFormat, AudioFormat, ImageFormat } from "../types";
 
 // ─── Supported extension lists (lowercase, no dot) ──────────────────
@@ -124,7 +124,7 @@ async function selectFfmpegAction(): Promise<FfmpegAction> {
     message: pc.dim("Select an action"),
     options: [
       { value: "convert", label: "Convert Video", hint: "change format" },
-      { value: "trim", label: "Trim Video", hint: "sub-second accuracy" },
+      { value: "trim", label: "Trim Video/Audio", hint: "sub-second accuracy" },
       { value: "extract-audio", label: "Extract Audio", hint: "320kbps MP3 / WAV" },
       { value: "strip-audio", label: "Strip Audio", hint: "mute, no re-encode" },
       { value: "make-gif", label: "Make GIF", hint: "high-quality palette" },
@@ -272,8 +272,8 @@ async function ffmpegFlow(): Promise<void> {
 
     case "trim": {
       inputFile = await fileBrowser({
-        message: "Select input video file",
-        allowedExtensions: VIDEO_EXTS,
+        message: "Select input video or audio file",
+        allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
       });
 
       const { trimStart, trimEnd } = await p.group(
@@ -307,7 +307,15 @@ async function ffmpegFlow(): Promise<void> {
         },
       );
 
-      outputPath = defaultOutputPath(inputFile, action, "mp4");
+      // Validate that start < end before proceeding
+      const rangeError = validateTrimRange(trimStart, trimEnd);
+      if (rangeError) {
+        p.log.error(pc.red(`  ${rangeError}`));
+        return; // back to main loop
+      }
+
+      const inputExt = extname(inputFile).slice(1);
+      outputPath = defaultOutputPath(inputFile, action, inputExt);
       outputPath = await askOutput(outputPath);
 
       await runFfmpegWithFeedback({
@@ -412,6 +420,13 @@ async function ffmpegFlow(): Promise<void> {
           },
         },
       );
+
+      // Validate that start < end before proceeding
+      const gifRangeError = validateTrimRange(g.trimStart, g.trimEnd);
+      if (gifRangeError) {
+        p.log.error(pc.red(`  ${gifRangeError}`));
+        return; // back to main loop
+      }
 
       outputPath = defaultOutputPath(inputFile, action);
       outputPath = await askOutput(outputPath);
