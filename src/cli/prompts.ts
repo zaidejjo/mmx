@@ -22,6 +22,36 @@ const CATEGORY_TO_TOOL: Record<UserCategory, Tool> = {
   image: "magick",
 };
 
+// ─── Media duration helpers ──────────────────────────────────────────
+/** Get media file duration in seconds via ffprobe. Returns null on failure. */
+async function getMediaDuration(filePath: string): Promise<number | null> {
+  try {
+    const proc = Bun.spawn([
+      "ffprobe", "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      const seconds = parseFloat(output.trim());
+      return Number.isNaN(seconds) ? null : seconds;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Format total seconds as HH:MM:SS (rounded down). */
+function formatSeconds(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 // ─── Output path helpers ────────────────────────────────────────────
 // Generates a sensible default like  "zaid_scaled.png"
 // The caller must prepend the desired directory (e.g. dirname(inputPath)).
@@ -276,42 +306,68 @@ async function ffmpegFlow(): Promise<void> {
         allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
       });
 
-      const { trimStart, trimEnd } = await p.group(
-        {
-          trimStart: () =>
-            p.text({
-              message: pc.dim("Start time"),
-              placeholder: "00:00:00  or  0 (seconds)",
-              validate(value) {
-                if (!value) return "Start time is required";
-                if (!validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
-                return;
-              },
-            }),
-          trimEnd: () =>
-            p.text({
-              message: pc.dim("End time"),
-              placeholder: "00:00:10  or  10 (seconds)",
-              validate(value) {
-                if (!value) return "End time is required";
-                if (!validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
-                return;
-              },
-            }),
-        },
-        {
-          onCancel: () => {
-            p.cancel("cancelled");
-            process.exit(0);
-          },
-        },
-      );
+      // Show media duration as reference
+      const dur = await getMediaDuration(inputFile);
+      const durationStr = dur !== null ? formatSeconds(dur) : null;
 
-      // Validate that start < end before proceeding
-      const rangeError = validateTrimRange(trimStart, trimEnd);
-      if (rangeError) {
-        p.log.error(pc.red(`  ${rangeError}`));
-        return; // back to main loop
+      let trimStart = "0";
+      let trimEnd = "";
+      let confirmed = false;
+
+      while (!confirmed) {
+        // ── Start time (defaults to 0 when left empty) ──
+        const resultStart = await p.text({
+          message: `Start time${durationStr ? pc.dim(`  (duration: ${durationStr})`) : ""}`,
+          placeholder: trimStart,
+          validate(value) {
+            if (value && !validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
+            return;
+          },
+        });
+        if (p.isCancel(resultStart)) { p.cancel("cancelled"); process.exit(0); }
+        if (resultStart) trimStart = resultStart;
+        // else keep previous (default "0" on first pass)
+
+        // ── End time ──
+        const resultEnd = await p.text({
+          message: `End time${durationStr ? pc.dim(`  (duration: ${durationStr})`) : ""}`,
+          placeholder: trimEnd || durationStr || "(required)",
+          validate(value) {
+            if (!value && !trimEnd) return "End time is required";
+            if (value && !validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
+            return;
+          },
+        });
+        if (p.isCancel(resultEnd)) { p.cancel("cancelled"); process.exit(0); }
+        if (resultEnd) trimEnd = resultEnd;
+        // else keep previous value
+
+        // Validate start < end
+        const rangeErr = validateTrimRange(trimStart, trimEnd);
+        if (rangeErr) {
+          p.log.error(pc.red(`  ${rangeErr}`));
+          const retry = await p.confirm({
+            message: "Adjust values?",
+            initialValue: true,
+          });
+          if (p.isCancel(retry)) { p.cancel("cancelled"); process.exit(0); }
+          if (retry) continue;
+          return; // back to main loop
+        }
+
+        // ── Confirm with back/forth navigation ──
+        const choice = await p.select({
+          message: `Trim from ${pc.cyan(trimStart)} → ${pc.cyan(trimEnd)}`,
+          options: [
+            { value: "confirm", label: "Confirm & Trim" },
+            { value: "back", label: "Adjust values", hint: "go back" },
+            { value: "cancel", label: "Cancel" },
+          ],
+        });
+        if (p.isCancel(choice)) { p.cancel("cancelled"); process.exit(0); }
+
+        if (choice === "confirm") confirmed = true;
+        // "back" → loop continues with previous values as placeholders
       }
 
       const inputExt = extname(inputFile).slice(1);
