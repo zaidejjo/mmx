@@ -6,7 +6,7 @@ import { fileBrowser, directoryBrowser } from "./filebrowser";
 import { runFfmpeg } from "../services/ffmpeg";
 import { runMagick } from "../services/imagemagick";
 import { createSpinner } from "../utils/spinner";
-import { validateTimestamp, validateScale, validateTrimRange } from "../utils/validators";
+import { validateTimestamp, validateScale, validateTrimRange, isExistingFile } from "../utils/validators";
 import type { Tool, FfmpegAction, MagickAction, VideoFormat, AudioFormat, ImageFormat } from "../types";
 
 // ─── Supported extension lists (lowercase, no dot) ──────────────────
@@ -21,6 +21,36 @@ const CATEGORY_TO_TOOL: Record<UserCategory, Tool> = {
   "video-audio": "ffmpeg",
   image: "magick",
 };
+
+// ─── Media duration helpers ──────────────────────────────────────────
+/** Get media file duration in seconds via ffprobe. Returns null on failure. */
+async function getMediaDuration(filePath: string): Promise<number | null> {
+  try {
+    const proc = Bun.spawn([
+      "ffprobe", "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode === 0) {
+      const seconds = parseFloat(output.trim());
+      return Number.isNaN(seconds) ? null : seconds;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Format total seconds as HH:MM:SS (rounded down). */
+function formatSeconds(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 // ─── Output path helpers ────────────────────────────────────────────
 // Generates a sensible default like  "zaid_scaled.png"
@@ -37,6 +67,7 @@ function smartName(inputPath: string, action: string, format?: string): string {
     "smart-scale":  "_scaled",
     "icon-bundle":  "_icon",
     "web-optimize": "_optimized",
+    optimize:       "_optimized",
   };
 
   const FORMATS: Record<string, string> = {
@@ -48,6 +79,7 @@ function smartName(inputPath: string, action: string, format?: string): string {
     "smart-scale":  "png",
     "icon-bundle":  "ico",
     "web-optimize": "webp",
+    optimize:       "mp4",
   };
 
   const suffix = SUFFIXES[action] ?? `_${action}`;
@@ -66,6 +98,19 @@ function defaultOutputPath(inputPath: string, action: string, format?: string): 
 async function runFfmpegWithFeedback(
   params: Parameters<typeof runFfmpeg>[0],
 ): Promise<boolean> {
+  // info action: no spinner, just display data
+  if (params.action === "info") {
+    const result = await runFfmpeg(params);
+    if (result.success && result.data) {
+      console.log(pc.dim("  ─────────────────────────"));
+      console.log(result.data);
+      console.log(pc.dim("  ─────────────────────────"));
+      return true;
+    }
+    p.log.error(pc.red(`  ${result.error || "info failed"}`));
+    return false;
+  }
+
   const spin = createSpinner();
   spin.start(`${params.action} ...`);
   const result = await runFfmpeg(params);
@@ -102,7 +147,7 @@ async function selectCategory(): Promise<UserCategory> {
       {
         value: "video-audio",
         label: "Video & Audio",
-        hint: "convert, trim, extract audio, make gif",
+        hint: "convert, trim, info, bulk convert, join",
       },
       {
         value: "image",
@@ -128,6 +173,11 @@ async function selectFfmpegAction(): Promise<FfmpegAction> {
       { value: "extract-audio", label: "Extract Audio", hint: "320kbps MP3 / WAV" },
       { value: "strip-audio", label: "Strip Audio", hint: "mute, no re-encode" },
       { value: "make-gif", label: "Make GIF", hint: "high-quality palette" },
+      { value: "info", label: "Media Info", hint: "codecs, resolution, duration" },
+      { value: "bulk-convert", label: "Bulk Convert", hint: "batch video format" },
+      { value: "join", label: "Join Videos", hint: "concatenate multiple files" },
+      { value: "optimize", label: "Smart Optimize", hint: "compress for Discord/Slack" },
+      { value: "denoise", label: "AI Audio Denoise", hint: "studio-quality RNNoise" },
     ],
   });
   if (p.isCancel(action)) {
@@ -276,42 +326,68 @@ async function ffmpegFlow(): Promise<void> {
         allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
       });
 
-      const { trimStart, trimEnd } = await p.group(
-        {
-          trimStart: () =>
-            p.text({
-              message: pc.dim("Start time"),
-              placeholder: "00:00:00  or  0 (seconds)",
-              validate(value) {
-                if (!value) return "Start time is required";
-                if (!validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
-                return;
-              },
-            }),
-          trimEnd: () =>
-            p.text({
-              message: pc.dim("End time"),
-              placeholder: "00:00:10  or  10 (seconds)",
-              validate(value) {
-                if (!value) return "End time is required";
-                if (!validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
-                return;
-              },
-            }),
-        },
-        {
-          onCancel: () => {
-            p.cancel("cancelled");
-            process.exit(0);
-          },
-        },
-      );
+      // Show media duration as reference
+      const dur = await getMediaDuration(inputFile);
+      const durationStr = dur !== null ? formatSeconds(dur) : null;
 
-      // Validate that start < end before proceeding
-      const rangeError = validateTrimRange(trimStart, trimEnd);
-      if (rangeError) {
-        p.log.error(pc.red(`  ${rangeError}`));
-        return; // back to main loop
+      let trimStart = "0";
+      let trimEnd = "";
+      let confirmed = false;
+
+      while (!confirmed) {
+        // ── Start time (defaults to 0 when left empty) ──
+        const resultStart = await p.text({
+          message: `Start time${durationStr ? pc.dim(`  (duration: ${durationStr})`) : ""}`,
+          placeholder: trimStart,
+          validate(value) {
+            if (value && !validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
+            return;
+          },
+        });
+        if (p.isCancel(resultStart)) { p.cancel("cancelled"); process.exit(0); }
+        if (resultStart) trimStart = resultStart;
+        // else keep previous (default "0" on first pass)
+
+        // ── End time ──
+        const resultEnd = await p.text({
+          message: `End time${durationStr ? pc.dim(`  (duration: ${durationStr})`) : ""}`,
+          placeholder: trimEnd || durationStr || "(required)",
+          validate(value) {
+            if (!value && !trimEnd) return "End time is required";
+            if (value && !validateTimestamp(value)) return "Use HH:MM:SS or seconds (e.g. 90)";
+            return;
+          },
+        });
+        if (p.isCancel(resultEnd)) { p.cancel("cancelled"); process.exit(0); }
+        if (resultEnd) trimEnd = resultEnd;
+        // else keep previous value
+
+        // Validate start < end
+        const rangeErr = validateTrimRange(trimStart, trimEnd);
+        if (rangeErr) {
+          p.log.error(pc.red(`  ${rangeErr}`));
+          const retry = await p.confirm({
+            message: "Adjust values?",
+            initialValue: true,
+          });
+          if (p.isCancel(retry)) { p.cancel("cancelled"); process.exit(0); }
+          if (retry) continue;
+          return; // back to main loop
+        }
+
+        // ── Confirm with back/forth navigation ──
+        const choice = await p.select({
+          message: `Trim from ${pc.cyan(trimStart)} → ${pc.cyan(trimEnd)}`,
+          options: [
+            { value: "confirm", label: "Confirm & Trim" },
+            { value: "back", label: "Adjust values", hint: "go back" },
+            { value: "cancel", label: "Cancel" },
+          ],
+        });
+        if (p.isCancel(choice)) { p.cancel("cancelled"); process.exit(0); }
+
+        if (choice === "confirm") confirmed = true;
+        // "back" → loop continues with previous values as placeholders
       }
 
       const inputExt = extname(inputFile).slice(1);
@@ -438,6 +514,145 @@ async function ffmpegFlow(): Promise<void> {
         trimStart: g.trimStart,
         trimEnd: g.trimEnd,
         fps: Number(g.fps) || 15,
+      });
+      break;
+    }
+
+    // ─── Media Info ───────────────────────────────────────────────────
+    case "info": {
+      inputFile = await fileBrowser({
+        message: "Select video or audio file",
+        allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
+      });
+
+      await runFfmpegWithFeedback({ action: "info", input: inputFile });
+      break;
+    }
+
+    // ─── Bulk Video Convert ───────────────────────────────────────────
+    case "bulk-convert": {
+      inputFile = await directoryBrowser({
+        message: "Select directory containing videos",
+      });
+      fmt = await selectVideoFormat();
+
+      const defaultOutDir = resolve(inputFile, fmt as string);
+      const outDir = await p.text({
+        message: pc.dim("Output directory  .  press Enter to accept"),
+        initialValue: defaultOutDir,
+        validate(value) {
+          if (!value || value.trim().length === 0) return "Directory path is required";
+          return;
+        },
+      });
+      if (p.isCancel(outDir)) { p.cancel("cancelled"); process.exit(0); }
+
+      await runFfmpegWithFeedback({
+        action: "bulk-convert",
+        input: inputFile,
+        output: resolve((outDir as string).trim()),
+        format: fmt as VideoFormat,
+      });
+      break;
+    }
+
+    // ─── Join Videos ──────────────────────────────────────────────────
+    case "join": {
+      p.log.step(pc.dim("Select files in order (at least 2)"));
+
+      const videoFiles: string[] = [];
+
+      // First 2 files: required, add without prompt
+      for (let i = 0; i < 2; i++) {
+        const f = await fileBrowser({
+          message: `Select video file #${i + 1}`,
+          allowedExtensions: VIDEO_EXTS,
+        });
+        videoFiles.push(f);
+      }
+
+      // Optional additional files
+      let addMore = true;
+      while (addMore) {
+        const more = await p.confirm({
+          message: pc.dim(`Add another file? (${videoFiles.length} selected)`),
+          initialValue: false,
+        });
+        if (p.isCancel(more)) { p.cancel("cancelled"); process.exit(0); }
+        if (!more) break;
+
+        const f = await fileBrowser({
+          message: `Select video file #${videoFiles.length + 1}`,
+          allowedExtensions: VIDEO_EXTS,
+        });
+        videoFiles.push(f);
+      }
+
+      // Default output: next to first file
+      const firstDir = dirname(videoFiles[0]);
+      const firstBase = basename(videoFiles[0], extname(videoFiles[0]));
+      const defaultOut = resolve(firstDir, `${firstBase}_joined.mp4`);
+
+      outputPath = await askOutput(defaultOut, "Output path for joined file");
+
+      await runFfmpegWithFeedback({
+        action: "join",
+        input: videoFiles[0],
+        inputs: videoFiles,
+        output: outputPath,
+      });
+      break;
+    }
+
+    // ─── Smart Optimize for Platform ─────────────────────────────────
+    case "optimize": {
+      inputFile = await fileBrowser({
+        message: "Select video file to compress",
+        allowedExtensions: VIDEO_EXTS,
+      });
+
+      const platform = await p.select({
+        message: pc.dim("Target platform"),
+        options: [
+          { value: "discord", label: "Discord Free", hint: "target 9.5 MB (limit 10 MB)" },
+          { value: "nitro", label: "Discord Nitro / Slack", hint: "target 48 MB (limit 50 MB)" },
+        ],
+      });
+      if (p.isCancel(platform)) { p.cancel("cancelled"); process.exit(0); }
+
+      const plat = platform as string;
+      const platSuffix = plat === "nitro" ? "nitro" : "discord";
+      const baseName = basename(inputFile, extname(inputFile));
+      const defaultOut = resolve(dirname(inputFile), `${baseName}_optimized_${platSuffix}.mp4`);
+
+      outputPath = await askOutput(defaultOut, "Output path");
+
+      await runFfmpegWithFeedback({
+        action: "optimize",
+        input: inputFile,
+        output: outputPath,
+        platform: plat,
+      });
+      break;
+    }
+
+    // ─── AI Audio Denoise ────────────────────────────────────────────
+    case "denoise": {
+      inputFile = await fileBrowser({
+        message: "Select video or audio file to denoise",
+        allowedExtensions: [...VIDEO_EXTS, ...AUDIO_EXTS],
+      });
+
+      const baseName = basename(inputFile, extname(inputFile));
+      const ext = extname(inputFile);
+      const defaultOut = resolve(dirname(inputFile), `${baseName}_denoised${ext}`);
+
+      outputPath = await askOutput(defaultOut, "Output path");
+
+      await runFfmpegWithFeedback({
+        action: "denoise",
+        input: inputFile,
+        output: outputPath,
       });
       break;
     }

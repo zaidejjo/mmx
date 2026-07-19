@@ -60,10 +60,15 @@ export function showHelp(): void {
   console.log();
   console.log(pc.bold("  FFmpeg Actions:"));
   console.log(`    convert        ${pc.dim("Universal video converter")}`);
-  console.log(`    trim           ${pc.dim("Precise video trimming")}`);
+  console.log(`    trim           ${pc.dim("Precise video/audio trimming")}`);
   console.log(`    extract-audio  ${pc.dim("Extract audio to MP3/WAV (320kbps)")}`);
   console.log(`    strip-audio    ${pc.dim("Mute audio (no re-encode)")}`);
   console.log(`    make-gif       ${pc.dim("Convert video to optimized GIF")}`);
+  console.log(`    info           ${pc.dim("Show codec, resolution, duration metadata")}`);
+  console.log(`    bulk-convert   ${pc.dim("Batch convert all videos in a directory")}`);
+  console.log(`    join           ${pc.dim("Join multiple video files into one")}`);
+  console.log(`    optimize       ${pc.dim("Smart compress for Discord/Slack limits")}`);
+  console.log(`    denoise        ${pc.dim("AI audio denoise via RNNoise (studio quality)")}`);
   console.log();
   console.log(pc.bold("  ImageMagick Actions:"));
   console.log(`    convert        ${pc.dim("Single image format conversion")}`);

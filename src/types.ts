@@ -7,7 +7,12 @@ export type FfmpegAction =
   | "trim"
   | "extract-audio"
   | "strip-audio"
-  | "make-gif";
+  | "make-gif"
+  | "info"
+  | "bulk-convert"
+  | "join"
+  | "optimize"
+  | "denoise";
 
 // ─── ImageMagick Actions ───────────────────────────────────────────
 export type MagickAction =
@@ -38,14 +43,19 @@ export interface ParsedArgs {
   trimEnd?: string;
   fps?: number;
   scale?: string;
+  platform?: string;
 }
 
 // ─── Service Execution Params ──────────────────────────────────────
 export interface FfmpegParams {
   action: FfmpegAction;
   input: string;
+  /** Multiple inputs for join/concat actions. */
+  inputs?: string[];
   output?: string;
   format?: VideoFormat | AudioFormat;
+  /** Target platform for optimize action ("discord" | "nitro"). */
+  platform?: string;
   trimStart?: string;
   trimEnd?: string;
   fps?: number;
@@ -64,4 +74,6 @@ export interface ServiceResult {
   success: boolean;
   outputPath?: string;
   error?: string;
+  /** Free-form data for info/inspect actions. */
+  data?: string;
 }
